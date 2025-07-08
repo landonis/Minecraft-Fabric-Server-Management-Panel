@@ -8,6 +8,7 @@ import authenticateToken from '../middleware/auth';
 
 dotenv.config();
 
+
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_default_secret';
 
