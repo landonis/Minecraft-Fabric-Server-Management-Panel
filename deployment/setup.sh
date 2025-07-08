@@ -91,6 +91,9 @@ cd $APP_DIR
 echo -e "${YELLOW}Installing Node.js dependencies...${NC}"
 npm install
 
+npm install axios
+npm install --save-dev @types/axios
+
 # Build backend
 echo -e "${YELLOW}Building backend...${NC}"
 cd backend
