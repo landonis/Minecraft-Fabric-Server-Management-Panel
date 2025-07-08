@@ -3,6 +3,10 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { serverRoutes } from './routes/server';
+import { modRoutes } from './routes/mods';
+import { worldRoutes } from './routes/world';
+import { playerRoutes } from './routes/players';
 
 const router = express.Router();
 const execAsync = promisify(exec);
