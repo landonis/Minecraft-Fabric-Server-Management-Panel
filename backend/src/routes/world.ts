@@ -2,7 +2,7 @@ import express from 'express';
 import multer, { FileFilterCallback } from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { authenticateToken } from '../middleware/auth';
+import authenticateToken from '../middleware/auth';
 import { exec } from 'child_process';
 
 const router = express.Router();
