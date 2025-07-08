@@ -3,12 +3,12 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import authRoutes from './routes/auth';
-import serverRoutes from './routes/server';
-import modRoutes from './routes/mods';
-import worldRoutes from './routes/world';
-import playerRoutes from './routes/players';
-import authenticate from './middleware/auth';
+import {authRoutes}from './routes/auth';
+import {serverRoutes} from './routes/server';
+import {modRoutes} from './routes/mods';
+import {worldRoutes} from './routes/world';
+import { playerRoutes } from './routes/players';
+import {authenticate} from './middleware/auth';
 
 dotenv.config();
 
