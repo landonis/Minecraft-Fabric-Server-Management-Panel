@@ -1,11 +1,35 @@
-import React, { useState } from 'react';
-import { Globe, Download, Upload, Archive } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Globe, Download, Upload, Archive, AlertTriangle, Info } from 'lucide-react';
 import { api } from '../utils/api';
 
+interface WorldInfo {
+  exists: boolean;
+  name: string;
+  size: number;
+  sizeFormatted?: string;
+}
+
 export const WorldManager: React.FC = () => {
+  const [worldInfo, setWorldInfo] = useState<WorldInfo | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  const fetchWorldInfo = async () => {
+    try {
+      const response = await api.getWorldInfo();
+      setWorldInfo(response.data);
+    } catch (err) {
+      console.warn('Failed to fetch world info:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorldInfo();
+  }, []);
 
   const handleExportWorld = async () => {
     setLoading(true);
@@ -30,24 +54,59 @@ export const WorldManager: React.FC = () => {
     }
   };
 
-  const handleImportWorld = async (file: File) => {
+  const handleFileSelect = (file: File) => {
     if (!file.name.endsWith('.tar')) {
       setError('Only .tar files are allowed');
       return;
     }
 
+    setPendingFile(file);
+    setShowConfirmDialog(true);
+  };
+
+  const handleConfirmImport = async () => {
+    if (!pendingFile) return;
+
     setLoading(true);
     setError('');
     setSuccess('');
+    setShowConfirmDialog(false);
+    setUploadProgress(0);
 
     try {
-      await api.importWorld(file);
-      setSuccess('World imported successfully! Restart the server to apply changes.');
+      // Simulate upload progress
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + 10;
+        });
+      }, 200);
+
+      await api.importWorld(pendingFile);
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      
+      setTimeout(() => {
+        setUploadProgress(0);
+        setSuccess('World imported successfully! The server has been restarted with the new world.');
+        fetchWorldInfo();
+      }, 500);
     } catch (err) {
       setError('Failed to import world');
+      setUploadProgress(0);
     } finally {
       setLoading(false);
+      setPendingFile(null);
     }
+  };
+
+  const handleCancelImport = () => {
+    setShowConfirmDialog(false);
+    setPendingFile(null);
   };
 
   return (
@@ -69,6 +128,39 @@ export const WorldManager: React.FC = () => {
         </div>
       )}
 
+      {/* World Info */}
+      {worldInfo && (
+        <div className="bg-gray-700 rounded-lg p-4 mb-6">
+          <div className="flex items-center mb-2">
+            <Info className="h-5 w-5 text-blue-400 mr-2" />
+            <h3 className="text-lg font-medium text-white">Current World</h3>
+          </div>
+          <div className="text-gray-300">
+            <p><strong>Name:</strong> {worldInfo.name}</p>
+            {worldInfo.exists && (
+              <p><strong>Size:</strong> {worldInfo.sizeFormatted || 'Unknown'}</p>
+            )}
+            <p><strong>Status:</strong> {worldInfo.exists ? 'Active' : 'No world found'}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Progress */}
+      {uploadProgress > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-300">Importing world...</span>
+            <span className="text-sm text-gray-300">{uploadProgress}%</span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div 
+              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-gray-700 rounded-lg p-6">
           <div className="flex items-center mb-4">
@@ -80,7 +172,7 @@ export const WorldManager: React.FC = () => {
           </p>
           <button
             onClick={handleExportWorld}
-            disabled={loading}
+            disabled={loading || !worldInfo?.exists}
             className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Archive className="h-4 w-4 mr-2" />
@@ -102,15 +194,58 @@ export const WorldManager: React.FC = () => {
               accept=".tar"
               onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) handleImportWorld(file);
+                if (file) handleFileSelect(file);
               }}
               className="hidden"
+              disabled={loading}
             />
             <Archive className="h-4 w-4 mr-2" />
             {loading ? 'Importing...' : 'Import World'}
           </label>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg max-w-md w-full p-6">
+            <div className="flex items-center mb-4">
+              <AlertTriangle className="h-6 w-6 text-yellow-400 mr-3" />
+              <h3 className="text-lg font-semibold text-white">Confirm World Import</h3>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-300 mb-4">
+                Are you sure you want to import this world? This action will:
+              </p>
+              <ul className="list-disc list-inside text-gray-400 space-y-1 mb-4">
+                <li>Stop the Minecraft server</li>
+                <li>Backup your current world</li>
+                <li>Replace it with the uploaded world</li>
+                <li>Restart the server</li>
+              </ul>
+              <p className="text-yellow-300 text-sm">
+                <strong>File:</strong> {pendingFile?.name}
+              </p>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleConfirmImport}
+                className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Yes, Import World
+              </button>
+              <button
+                onClick={handleCancelImport}
+                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mt-6 p-4 bg-yellow-900/20 border border-yellow-700 rounded-lg">
         <div className="flex items-center">
@@ -121,11 +256,12 @@ export const WorldManager: React.FC = () => {
           </div>
           <div className="ml-3">
             <h3 className="text-sm font-medium text-yellow-100">
-              Important Notice
+              Important Safety Notice
             </h3>
             <div className="mt-2 text-sm text-yellow-200">
               <p>
-                Always stop the server before importing a world. The server must be restarted after world import to load the new world data.
+                World import automatically stops the server, validates the archive, backs up your current world, 
+                and restarts the server. Only valid Minecraft world archives (.tar) with level.dat are accepted.
               </p>
             </div>
           </div>

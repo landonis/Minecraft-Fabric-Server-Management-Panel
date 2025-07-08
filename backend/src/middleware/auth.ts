@@ -2,12 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from '../database/init';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-here';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
 
 export interface AuthRequest extends Request {
   user?: {
     id: number;
     username: string;
+    isAdmin: boolean;
   };
 }
 
@@ -19,17 +23,36 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; isAdmin: boolean };
     
-    // Verify user still exists
-    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(decoded.id);
+    // Verify user still exists and get current data
+    const user = db.prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(decoded.id);
     if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
+      return res.status(401).json({ success: false, message: 'Invalid token - user not found' });
     }
 
-    req.user = user as { id: number; username: string };
+    req.user = {
+      id: user.id,
+      username: user.username,
+      isAdmin: user.is_admin === 1
+    };
+    
     next();
   } catch (error) {
-    return res.status(401).json({ success: false, message: 'Invalid token' });
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ success: false, message: 'Invalid token format' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Token expired' });
+    }
+    return res.status(401).json({ success: false, message: 'Token verification failed' });
   }
+};
+
+// Admin-only middleware
+export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user?.isAdmin) {
+    return res.status(403).json({ success: false, message: 'Admin access required' });
+  }
+  next();
 };

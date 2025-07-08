@@ -37,7 +37,8 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }
 
     return response.json();
@@ -56,7 +57,8 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }
 
     return response.json();
@@ -83,6 +85,7 @@ class ApiClient {
       body: JSON.stringify({ currentPassword, newPassword }),
     });
   }
+
   // Server endpoints
   async getServerStatus() {
     return this.request('/server/status');
@@ -118,6 +121,10 @@ class ApiClient {
   }
 
   // World endpoints
+  async getWorldInfo() {
+    return this.request('/world/info');
+  }
+
   async exportWorld() {
     const response = await fetch(`${API_BASE}/world/export`, {
       headers: {
@@ -126,7 +133,8 @@ class ApiClient {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
     }
     
     return response.blob();
@@ -139,6 +147,28 @@ class ApiClient {
   // Player endpoints
   async getPlayers() {
     return this.request('/players');
+  }
+
+  async getPlayerInventory(uuid: string) {
+    return this.request(`/players/${uuid}/inventory`);
+  }
+
+  async getPlayerPosition(uuid: string) {
+    return this.request(`/players/${uuid}/position`);
+  }
+
+  async kickPlayer(uuid: string, reason: string) {
+    return this.request(`/players/${uuid}/kick`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async sendPlayerMessage(uuid: string, message: string) {
+    return this.request(`/players/${uuid}/message`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
   }
 }
 

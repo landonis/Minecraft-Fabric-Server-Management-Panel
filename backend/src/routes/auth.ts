@@ -1,20 +1,86 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { db } from '../database/init';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-here';
+
+// Require JWT_SECRET to be set
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+
 const SALT_ROUNDS = 12;
 
+// Rate limiting for login attempts
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 requests per windowMs
+  message: {
+    success: false,
+    message: 'Too many login attempts, please try again later'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Rate limiting for registration
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3, // Limit each IP to 3 registration attempts per hour
+  message: {
+    success: false,
+    message: 'Too many registration attempts, please try again later'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Input validation middleware
+const validateAuthInput = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Username and password are required' 
+    });
+  }
+
+  // Sanitize username
+  const sanitizedUsername = username.trim().toLowerCase();
+  if (sanitizedUsername.length < 3 || sanitizedUsername.length > 50) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Username must be between 3 and 50 characters' 
+    });
+  }
+
+  // Validate username format (alphanumeric and underscores only)
+  if (!/^[a-zA-Z0-9_]+$/.test(sanitizedUsername)) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Username can only contain letters, numbers, and underscores' 
+    });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Password must be at least 6 characters long' 
+    });
+  }
+
+  req.body.username = sanitizedUsername;
+  next();
+};
+
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, validateAuthInput, async (req, res) => {
   try {
     const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password are required' });
-    }
 
     // Check if user already exists
     const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
@@ -25,7 +91,7 @@ router.post('/register', async (req, res) => {
     // Hash password
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-    // Insert user
+    // Insert user (new users are not admin by default)
     const result = db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, 0);
     
     // Generate JWT
@@ -55,13 +121,9 @@ router.post('/register', async (req, res) => {
 });
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, validateAuthInput, async (req, res) => {
   try {
     const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password are required' });
-    }
 
     // Find user
     const user = db.prepare('SELECT id, username, password_hash, must_change_password, is_admin, created_at FROM users WHERE username = ?').get(username);
@@ -146,6 +208,9 @@ router.post('/change-password', async (req, res) => {
       message: 'Password changed successfully'
     });
   } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ success: false, message: 'Invalid token' });
+    }
     console.error('Password change error:', error);
     res.status(500).json({ success: false, message: 'Failed to change password' });
   }

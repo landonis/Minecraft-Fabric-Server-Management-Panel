@@ -1,151 +1,210 @@
 import express from 'express';
-import { spawn, exec } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 
 const router = express.Router();
+const execAsync = promisify(exec);
 
 const MINECRAFT_PATH = process.env.MINECRAFT_PATH || '/opt/minecraft';
-const SERVER_JAR = 'fabric-server-launch.jar';
+const SERVICE_NAME = 'minecraft-server';
 
-let serverProcess: any = null;
+// Get server status using systemd
+router.get('/status', async (req, res) => {
+  try {
+    // Check if service is active
+    const { stdout: activeState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    const isRunning = activeState.trim() === 'active';
 
-// Get server status
-router.get('/status', (req, res) => {
-  const isRunning = serverProcess && !serverProcess.killed;
-  
-  let uptime = '0m';
-  let memory = '0 MB';
-  let players = 0;
+    let uptime = '0m';
+    let memory = '0 MB';
+    let players = 0;
 
-  if (isRunning && serverProcess.pid) {
-    try {
-      // Get process info
-      exec(`ps -p ${serverProcess.pid} -o etime,rss --no-headers`, (error, stdout) => {
-        if (!error && stdout) {
-          const [time, rss] = stdout.trim().split(/\s+/);
-          uptime = time;
-          memory = `${Math.round(parseInt(rss) / 1024)} MB`;
+    if (isRunning) {
+      try {
+        // Get service status details
+        const { stdout: statusOutput } = await execAsync(`systemctl show ${SERVICE_NAME} -p ActiveEnterTimestamp,MemoryCurrent`);
+        
+        // Parse uptime
+        const activeEnterMatch = statusOutput.match(/ActiveEnterTimestamp=(.+)/);
+        if (activeEnterMatch) {
+          const startTime = new Date(activeEnterMatch[1]);
+          const now = new Date();
+          const uptimeMs = now.getTime() - startTime.getTime();
+          const uptimeMinutes = Math.floor(uptimeMs / (1000 * 60));
+          const hours = Math.floor(uptimeMinutes / 60);
+          const minutes = uptimeMinutes % 60;
+          uptime = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
         }
-      });
-    } catch (error) {
-      console.error('Error getting process info:', error);
-    }
-  }
 
-  res.json({
-    success: true,
-    data: {
-      running: isRunning,
-      pid: serverProcess?.pid,
-      uptime,
-      memory,
-      players
+        // Parse memory usage
+        const memoryMatch = statusOutput.match(/MemoryCurrent=(\d+)/);
+        if (memoryMatch) {
+          const memoryBytes = parseInt(memoryMatch[1]);
+          memory = `${Math.round(memoryBytes / 1024 / 1024)} MB`;
+        }
+
+        // Get player count from server logs if available
+        try {
+          const logPath = path.join(MINECRAFT_PATH, 'logs', 'latest.log');
+          if (fs.existsSync(logPath)) {
+            const logContent = fs.readFileSync(logPath, 'utf-8');
+            const playerMatches = logContent.match(/There are (\d+) of a max of \d+ players online/g);
+            if (playerMatches && playerMatches.length > 0) {
+              const lastMatch = playerMatches[playerMatches.length - 1];
+              const playerCount = lastMatch.match(/There are (\d+)/);
+              if (playerCount) {
+                players = parseInt(playerCount[1]);
+              }
+            }
+          }
+        } catch (logError) {
+          console.warn('Could not read player count from logs:', logError);
+        }
+      } catch (statusError) {
+        console.warn('Could not get detailed status:', statusError);
+      }
     }
-  });
+
+    res.json({
+      success: true,
+      data: {
+        running: isRunning,
+        uptime,
+        memory,
+        players
+      }
+    });
+  } catch (error) {
+    console.error('Server status error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to get server status',
+      data: {
+        running: false,
+        uptime: '0m',
+        memory: '0 MB',
+        players: 0
+      }
+    });
+  }
 });
 
-// Start server
-router.post('/start', (req, res) => {
-  if (serverProcess && !serverProcess.killed) {
-    return res.status(400).json({ success: false, message: 'Server is already running' });
-  }
-
+// Start server using systemd
+router.post('/start', async (req, res) => {
   try {
-    const serverJarPath = path.join(MINECRAFT_PATH, SERVER_JAR);
-    
-    if (!fs.existsSync(serverJarPath)) {
-      return res.status(400).json({ success: false, message: 'Server jar not found' });
+    // Check if already running
+    const { stdout: activeState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    if (activeState.trim() === 'active') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Server is already running' 
+      });
     }
 
-    serverProcess = spawn('java', ['-Xmx2G', '-Xms1G', '-jar', SERVER_JAR, 'nogui'], {
-      cwd: MINECRAFT_PATH,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    serverProcess.on('error', (error: any) => {
-      console.error('Server start error:', error);
-      res.status(500).json({ success: false, message: 'Failed to start server' });
-    });
-
-    serverProcess.on('spawn', () => {
-      console.log('Minecraft server started with PID:', serverProcess.pid);
-      res.json({ success: true, message: 'Server started successfully' });
-    });
-
-    serverProcess.on('exit', (code: number) => {
-      console.log(`Server exited with code ${code}`);
-      serverProcess = null;
-    });
-
+    // Start the service
+    await execAsync(`systemctl start ${SERVICE_NAME}`);
+    
+    // Wait a moment and verify it started
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const { stdout: newState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    
+    if (newState.trim() === 'active') {
+      res.json({ 
+        success: true, 
+        message: 'Server started successfully' 
+      });
+    } else {
+      // Get failure reason
+      const { stdout: status } = await execAsync(`systemctl status ${SERVICE_NAME} --no-pager -l`);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Server failed to start',
+        details: status
+      });
+    }
   } catch (error) {
     console.error('Server start error:', error);
-    res.status(500).json({ success: false, message: 'Failed to start server' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to start server',
+      details: error.message
+    });
   }
 });
 
-// Stop server
-router.post('/stop', (req, res) => {
-  if (!serverProcess || serverProcess.killed) {
-    return res.status(400).json({ success: false, message: 'Server is not running' });
-  }
-
+// Stop server using systemd
+router.post('/stop', async (req, res) => {
   try {
-    serverProcess.stdin.write('stop\n');
-    
-    setTimeout(() => {
-      if (serverProcess && !serverProcess.killed) {
-        serverProcess.kill('SIGTERM');
-      }
-    }, 10000);
-
-    res.json({ success: true, message: 'Server stop command sent' });
-  } catch (error) {
-    console.error('Server stop error:', error);
-    res.status(500).json({ success: false, message: 'Failed to stop server' });
-  }
-});
-
-// Restart server
-router.post('/restart', async (req, res) => {
-  try {
-    if (serverProcess && !serverProcess.killed) {
-      serverProcess.stdin.write('stop\n');
-      
-      await new Promise(resolve => {
-        serverProcess.on('exit', resolve);
-        setTimeout(() => {
-          if (serverProcess && !serverProcess.killed) {
-            serverProcess.kill('SIGTERM');
-          }
-          resolve(null);
-        }, 10000);
+    // Check if running
+    const { stdout: activeState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    if (activeState.trim() !== 'active') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Server is not running' 
       });
     }
 
-    // Start server again
-    setTimeout(() => {
-      const serverJarPath = path.join(MINECRAFT_PATH, SERVER_JAR);
-      
-      serverProcess = spawn('java', ['-Xmx2G', '-Xms1G', '-jar', SERVER_JAR, 'nogui'], {
-        cwd: MINECRAFT_PATH,
-        stdio: ['pipe', 'pipe', 'pipe']
+    // Stop the service
+    await execAsync(`systemctl stop ${SERVICE_NAME}`);
+    
+    // Wait a moment and verify it stopped
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const { stdout: newState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    
+    if (newState.trim() === 'inactive') {
+      res.json({ 
+        success: true, 
+        message: 'Server stopped successfully' 
       });
-
-      serverProcess.on('error', (error: any) => {
-        console.error('Server restart error:', error);
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        message: 'Server failed to stop properly' 
       });
+    }
+  } catch (error) {
+    console.error('Server stop error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to stop server',
+      details: error.message
+    });
+  }
+});
 
-      serverProcess.on('exit', (code: number) => {
-        console.log(`Server exited with code ${code}`);
-        serverProcess = null;
+// Restart server using systemd
+router.post('/restart', async (req, res) => {
+  try {
+    // Restart the service
+    await execAsync(`systemctl restart ${SERVICE_NAME}`);
+    
+    // Wait a moment and verify it restarted
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const { stdout: newState } = await execAsync(`systemctl is-active ${SERVICE_NAME}`);
+    
+    if (newState.trim() === 'active') {
+      res.json({ 
+        success: true, 
+        message: 'Server restarted successfully' 
       });
-    }, 2000);
-
-    res.json({ success: true, message: 'Server restart initiated' });
+    } else {
+      // Get failure reason
+      const { stdout: status } = await execAsync(`systemctl status ${SERVICE_NAME} --no-pager -l`);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Server failed to restart',
+        details: status
+      });
+    }
   } catch (error) {
     console.error('Server restart error:', error);
-    res.status(500).json({ success: false, message: 'Failed to restart server' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to restart server',
+      details: error.message
+    });
   }
 });
 
@@ -163,16 +222,18 @@ router.get('/logs', (req, res) => {
       .filter(line => line.trim())
       .slice(-100)
       .map(line => {
-        const match = line.match(/\[([^\]]+)\] \[([^\]]+)\]: (.+)/);
+        const match = line.match(/\[([^\]]+)\] \[([^\]]+)\/([^\]]+)\]: (.+)/);
         if (match) {
           return {
             timestamp: match[1],
-            level: match[2],
-            message: match[3]
+            thread: match[2],
+            level: match[3],
+            message: match[4]
           };
         }
         return {
           timestamp: new Date().toISOString(),
+          thread: 'Server',
           level: 'INFO',
           message: line
         };

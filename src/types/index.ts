@@ -20,6 +20,31 @@ export interface Player {
   online: boolean;
   lastSeen?: string;
   playtime?: string;
+  position?: {
+    x: number;
+    y: number;
+    z: number;
+  };
+}
+
+export interface PlayerInventory {
+  uuid: string;
+  inventory: Array<{
+    slot: number;
+    item: string;
+    count: number;
+    nbt?: any;
+  }>;
+}
+
+export interface PlayerPosition {
+  uuid: string;
+  position: {
+    x: number;
+    y: number;
+    z: number;
+    dimension: string;
+  };
 }
 
 export interface ModFile {
@@ -32,8 +57,16 @@ export interface ModFile {
 
 export interface ServerLog {
   timestamp: string;
+  thread: string;
   level: string;
   message: string;
+}
+
+export interface WorldInfo {
+  exists: boolean;
+  name: string;
+  size: number;
+  sizeFormatted?: string;
 }
 
 export interface AuthResponse {

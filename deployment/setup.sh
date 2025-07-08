@@ -50,10 +50,11 @@ apt install -y \
   htop \
   tree
 
-# Create application user
-echo -e "${YELLOW}Creating application user...${NC}"
+# Create minecraft user and group
+echo -e "${YELLOW}Creating minecraft user...${NC}"
+useradd -r -s /bin/false minecraft || true
 useradd -r -s /bin/false minecraft-manager || true
-usermod -aG sudo minecraft-manager || true
+usermod -aG minecraft minecraft-manager || true
 
 # Create directories
 echo -e "${YELLOW}Creating directories...${NC}"
@@ -61,12 +62,14 @@ mkdir -p $APP_DIR
 mkdir -p $MINECRAFT_DIR/{mods,world,backups,logs}
 mkdir -p $DATA_DIR
 mkdir -p $LOG_DIR
+mkdir -p /tmp/minecraft-imports
 
 # Set permissions
 chown -R minecraft-manager:minecraft-manager $APP_DIR
-chown -R minecraft-manager:minecraft-manager $MINECRAFT_DIR
+chown -R minecraft:minecraft $MINECRAFT_DIR
 chown -R minecraft-manager:minecraft-manager $DATA_DIR
 chown -R minecraft-manager:minecraft-manager $LOG_DIR
+chown -R minecraft:minecraft /tmp/minecraft-imports
 
 # Clone repository
 echo -e "${YELLOW}Cloning repository...${NC}"
@@ -89,21 +92,6 @@ cd backend
 npm install
 npm run build
 
-# Initialize database and create default admin
-echo -e "${YELLOW}Initializing database...${NC}"
-cd $APP_DIR
-node -e "
-require('dotenv').config();
-const { initDatabase } = require('./backend/dist/database/init.js');
-initDatabase();
-console.log('Database initialization completed');
-"
-
-# Build frontend
-echo -e "${YELLOW}Building frontend...${NC}"
-cd $APP_DIR
-npm run build
-
 # Create environment file
 echo -e "${YELLOW}Creating environment configuration...${NC}"
 cat > $APP_DIR/.env << EOF
@@ -123,6 +111,7 @@ MINECRAFT_PATH=$MINECRAFT_DIR
 WORLD_PATH=$MINECRAFT_DIR/world
 MODS_PATH=$MINECRAFT_DIR/mods
 BACKUP_PATH=$MINECRAFT_DIR/backups
+TEMP_PATH=/tmp/minecraft-imports
 
 # Fabric Mod Integration
 FABRIC_MOD_PORT=8080
@@ -131,6 +120,21 @@ EOF
 # Set secure permissions for environment file
 chmod 600 $APP_DIR/.env
 chown minecraft-manager:minecraft-manager $APP_DIR/.env
+
+# Initialize database and create default admin
+echo -e "${YELLOW}Initializing database...${NC}"
+cd $APP_DIR
+NODE_ENV=production node -e "
+require('dotenv').config();
+const { initDatabase } = require('./backend/dist/database/init.js');
+initDatabase();
+console.log('Database initialization completed');
+"
+
+# Build frontend
+echo -e "${YELLOW}Building frontend...${NC}"
+cd $APP_DIR
+npm run build
 
 # Download Fabric Server
 echo -e "${YELLOW}Setting up Minecraft Fabric server...${NC}"
@@ -182,7 +186,7 @@ resource-pack-sha1=
 EOF
 
 # Set permissions
-chown -R minecraft-manager:minecraft-manager $MINECRAFT_DIR
+chown -R minecraft:minecraft $MINECRAFT_DIR
 
 # Create systemd service for Minecraft server
 echo -e "${YELLOW}Creating Minecraft server systemd service...${NC}"
@@ -193,11 +197,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=minecraft-manager
-Group=minecraft-manager
+User=minecraft
+Group=minecraft
 WorkingDirectory=$MINECRAFT_DIR
 ExecStart=/usr/bin/java -Xmx2G -Xms1G -jar fabric-server-launch.jar nogui
-Restart=always
+Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
@@ -358,7 +362,6 @@ else
     journalctl -u minecraft-manager --no-pager -l
 fi
 
-systemctl start minecraft-manager
 systemctl start nginx
 
 # Obtain SSL certificate
@@ -392,7 +395,7 @@ $MINECRAFT_DIR/logs/*.log {
     compress
     delaycompress
     notifempty
-    create 640 minecraft-manager minecraft-manager
+    create 640 minecraft minecraft
 }
 EOF
 
@@ -422,7 +425,7 @@ chmod +x /usr/local/bin/minecraft-backup.sh
 
 # Schedule daily backups
 echo -e "${YELLOW}Scheduling daily backups...${NC}"
-echo "0 4 * * * /usr/local/bin/minecraft-backup.sh" | crontab -u minecraft-manager -
+echo "0 4 * * * /usr/local/bin/minecraft-backup.sh" | crontab -u minecraft -
 
 # Create status check script
 cat > /usr/local/bin/minecraft-status.sh << 'EOF'
@@ -462,7 +465,7 @@ echo -e "${YELLOW}Performing final setup tasks...${NC}"
 
 # Set final permissions
 chown -R minecraft-manager:minecraft-manager $APP_DIR
-chown -R minecraft-manager:minecraft-manager $MINECRAFT_DIR
+chown -R minecraft:minecraft $MINECRAFT_DIR
 chown -R minecraft-manager:minecraft-manager $DATA_DIR
 
 # Restart services to apply all changes
@@ -477,12 +480,24 @@ echo -e "${GREEN}Your Minecraft Server Manager is now installed and configured.$
 echo
 echo -e "${YELLOW}Access your application at: https://$DOMAIN${NC}"
 echo
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}  Default Admin Account${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo
+echo -e "${GREEN}A default admin account has been created:${NC}"
+echo -e "${YELLOW}Username: admin${NC}"
+echo -e "${YELLOW}Password: admin${NC}"
+echo
+echo -e "${RED}⚠️  SECURITY WARNING:${NC}"
+echo -e "${RED}You will be required to change this password on first login.${NC}"
+echo -e "${RED}This is a temporary password for initial access only.${NC}"
+echo
 echo -e "${BLUE}Important Notes:${NC}"
-echo -e "${BLUE}• First user to register will be the admin${NC}"
 echo -e "${BLUE}• Minecraft server port: 25565${NC}"
 echo -e "${BLUE}• Web application runs on port 3001 (proxied via NGINX)${NC}"
 echo -e "${BLUE}• SSL certificate auto-renewal is configured${NC}"
 echo -e "${BLUE}• Daily backups are scheduled at 4 AM${NC}"
+echo -e "${BLUE}• Server management uses systemd for reliability${NC}"
 echo
 echo -e "${YELLOW}Useful Commands:${NC}"
 echo -e "${YELLOW}• Status check: /usr/local/bin/minecraft-status.sh${NC}"
@@ -499,29 +514,3 @@ echo -e "${RED}• Monitor logs regularly${NC}"
 echo -e "${RED}• Keep system updated: apt update && apt upgrade${NC}"
 echo
 echo -e "${GREEN}Setup completed successfully!${NC}"
-echo
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Default Admin Account${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo
-echo -e "${GREEN}A default admin account has been created:${NC}"
-echo -e "${YELLOW}Username: admin${NC}"
-echo -e "${YELLOW}Password: admin${NC}"
-echo
-echo -e "${RED}⚠️  SECURITY WARNING:${NC}"
-echo -e "${RED}You will be required to change this password on first login.${NC}"
-echo -e "${RED}This is a temporary password for initial access only.${NC}"
-echo
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  Default Admin Account${NC}"
-echo -e "${BLUE}========================================${NC}"
-echo
-echo -e "${GREEN}A default admin account has been created:${NC}"
-echo -e "${YELLOW}Username: admin${NC}"
-echo -e "${YELLOW}Password: admin${NC}"
-echo
-echo -e "${RED}⚠️  SECURITY WARNING:${NC}"
-echo -e "${RED}You will be required to change this password on first login.${NC}"
-echo -e "${RED}This is a temporary password for initial access only.${NC}"
-echo
-EOF
