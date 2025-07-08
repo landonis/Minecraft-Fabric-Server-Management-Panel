@@ -8,7 +8,7 @@ User=minecraft-manager
 Group=minecraft-manager
 WorkingDirectory=/home/ubuntu/minecraft-manager
 Environment=NODE_ENV=production
-EnvironmentFile=/home/ubuntu/minecraft-manager/.env
+EnvironmentFile=/home/ubuntu/minecraft-manager/deployment/environment.env
 ExecStart=/usr/bin/node /home/ubuntu/minecraft-manager/backend/dist/server.js
 Restart=always
 RestartSec=10
