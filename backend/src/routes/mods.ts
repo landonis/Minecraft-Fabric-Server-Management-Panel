@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../db';
-import { authenticateToken } from '../middleware/auth';
+import authenticateToken from '../middleware/auth';
 
 const router = express.Router();
 
