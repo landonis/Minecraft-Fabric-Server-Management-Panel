@@ -21,7 +21,7 @@ GITHUB_REPO="https://github.com/landonis/Minecraft-Fabric-Server-Management-Pane
 
 # System paths
 APP_DIR="/home/ubuntu/minecraft-manager"
-MINECRAFT_DIR="/home/ubuntu/Minecraft-Folder"
+MINECRAFT_DIR="/home/ubuntu/Minecraft"
 DATA_DIR="/home/ubuntu/minecraft-data"
 LOG_DIR="/home/ubuntu/minecraft-logs/minecraft-manager"
 
