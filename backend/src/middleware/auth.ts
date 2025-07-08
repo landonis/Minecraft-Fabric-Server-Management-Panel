@@ -21,9 +21,13 @@ function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextF
 
   jwt.verify(token, JWT_SECRET, (error, userDecoded) => {
     if (error) {
-      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
-        return res.status(403).json({ message: 'Invalid or expired token' });
-      }
+      if (error && typeof error === 'object' && 'name' in error) {
+        if (error.name === 'JsonWebTokenError') {
+          return res.status(401).json({ error: 'Invalid token' });
+        } else if (error.name === 'TokenExpiredError') {
+          return res.status(401).json({ error: 'Token expired' });
+        }
+    }
       return res.status(500).json({ message: 'Token verification failed' });
     }
 
