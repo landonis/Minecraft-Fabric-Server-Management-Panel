@@ -36,7 +36,7 @@ export const useAuthProvider = () => {
 
   const login = async (email: string, password: string) => {
     try {
-      const response: AuthResponse = await api.login(username, password);
+      const response: AuthResponse = await api.login(email, password);
       api.setToken(response.token);
       setUser(response.user);
       localStorage.setItem('user', JSON.stringify(response.user));
@@ -47,7 +47,7 @@ export const useAuthProvider = () => {
 
   const register = async (email: string, password: string) => {
     try {
-      const response: AuthResponse = await api.register(username, password);
+      const response: AuthResponse = await api.register(email, password);
       api.setToken(response.token);
       setUser(response.user);
       localStorage.setItem('user', JSON.stringify(response.user));

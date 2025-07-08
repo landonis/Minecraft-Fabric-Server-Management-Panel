@@ -61,7 +61,7 @@ A production-ready full-stack web application for managing Minecraft Fabric serv
 ### Default Admin Account
 
 After deployment, you can access the application using:
-- **Username**: `admin`
+- **Username**: `admin`  
 - **Password**: `admin`
 
 ⚠️ **Security Notice**: You will be required to change this password on first login. This is a temporary password for initial access only.

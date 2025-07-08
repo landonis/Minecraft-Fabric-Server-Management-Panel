@@ -26,10 +26,14 @@ router.post('/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
     // Insert user
-    const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash);
+    const result = db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, 0);
     
     // Generate JWT
-    const token = jwt.sign({ id: result.lastInsertRowid, username }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ 
+      id: result.lastInsertRowid, 
+      username,
+      isAdmin: false 
+    }, JWT_SECRET, { expiresIn: '24h' });
 
     res.json({
       success: true,
@@ -38,6 +42,8 @@ router.post('/register', async (req, res) => {
         user: {
           id: result.lastInsertRowid,
           username,
+          isAdmin: false,
+          mustChangePassword: false,
           createdAt: new Date().toISOString()
         }
       }

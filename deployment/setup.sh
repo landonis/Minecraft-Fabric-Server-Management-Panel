@@ -89,9 +89,19 @@ cd backend
 npm install
 npm run build
 
+# Initialize database and create default admin
+echo -e "${YELLOW}Initializing database...${NC}"
+cd $APP_DIR
+node -e "
+require('dotenv').config();
+const { initDatabase } = require('./backend/dist/database/init.js');
+initDatabase();
+console.log('Database initialization completed');
+"
+
 # Build frontend
 echo -e "${YELLOW}Building frontend...${NC}"
-cd ..
+cd $APP_DIR
 npm run build
 
 # Create environment file
@@ -106,7 +116,7 @@ FRONTEND_URL=https://$DOMAIN
 DB_PATH=$DATA_DIR/database.db
 
 # JWT Configuration
-JWT_SECRET=🔧[DEFINE-REPLACE-WITH-SECURE-RANDOM-STRING]
+JWT_SECRET=$(openssl rand -hex 32)
 
 # Minecraft Server Configuration
 MINECRAFT_PATH=$MINECRAFT_DIR
@@ -115,7 +125,7 @@ MODS_PATH=$MINECRAFT_DIR/mods
 BACKUP_PATH=$MINECRAFT_DIR/backups
 
 # Fabric Mod Integration
-FABRIC_MOD_PORT=8080  # 🔧 [DEFINE] - Port for custom Fabric mod API
+FABRIC_MOD_PORT=8080
 EOF
 
 # Set secure permissions for environment file
@@ -335,6 +345,20 @@ systemctl start fail2ban
 # Start services
 echo -e "${YELLOW}Starting services...${NC}"
 systemctl start minecraft-manager
+
+# Wait a moment for the service to start
+sleep 3
+
+# Check if the service started successfully
+if systemctl is-active --quiet minecraft-manager; then
+    echo -e "${GREEN}✅ Minecraft Manager service started successfully${NC}"
+else
+    echo -e "${RED}❌ Failed to start Minecraft Manager service${NC}"
+    echo -e "${YELLOW}Checking logs...${NC}"
+    journalctl -u minecraft-manager --no-pager -l
+fi
+
+systemctl start minecraft-manager
 systemctl start nginx
 
 # Obtain SSL certificate
@@ -436,12 +460,6 @@ chmod +x /usr/local/bin/minecraft-status.sh
 # Final setup tasks
 echo -e "${YELLOW}Performing final setup tasks...${NC}"
 
-# Generate JWT secret if not set
-if grep -q "🔧\[DEFINE" $APP_DIR/.env; then
-    JWT_SECRET=$(openssl rand -hex 32)
-    sed -i "s/JWT_SECRET=🔧\[DEFINE-REPLACE-WITH-SECURE-RANDOM-STRING\]/JWT_SECRET=$JWT_SECRET/" $APP_DIR/.env
-fi
-
 # Set final permissions
 chown -R minecraft-manager:minecraft-manager $APP_DIR
 chown -R minecraft-manager:minecraft-manager $MINECRAFT_DIR
@@ -469,17 +487,30 @@ echo
 echo -e "${YELLOW}Useful Commands:${NC}"
 echo -e "${YELLOW}• Status check: /usr/local/bin/minecraft-status.sh${NC}"
 echo -e "${YELLOW}• Manual backup: /usr/local/bin/minecraft-backup.sh${NC}"
-echo -e "${YELLOW}• View logs: journalctl -u minecraft-manager -f${NC}"
+echo -e "${YELLOW}• View web app logs: journalctl -u minecraft-manager -f${NC}"
+echo -e "${YELLOW}• View Minecraft logs: journalctl -u minecraft-server -f${NC}"
 echo -e "${YELLOW}• Restart web app: systemctl restart minecraft-manager${NC}"
 echo -e "${YELLOW}• Restart Minecraft: systemctl restart minecraft-server${NC}"
 echo
 echo -e "${RED}Security Reminders:${NC}"
-echo -e "${RED}• Update the JWT_SECRET in $APP_DIR/.env${NC}"
+echo -e "${RED}• Change the default admin password immediately${NC}"
 echo -e "${RED}• Review firewall rules: ufw status${NC}"
 echo -e "${RED}• Monitor logs regularly${NC}"
 echo -e "${RED}• Keep system updated: apt update && apt upgrade${NC}"
 echo
 echo -e "${GREEN}Setup completed successfully!${NC}"
+echo
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}  Default Admin Account${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo
+echo -e "${GREEN}A default admin account has been created:${NC}"
+echo -e "${YELLOW}Username: admin${NC}"
+echo -e "${YELLOW}Password: admin${NC}"
+echo
+echo -e "${RED}⚠️  SECURITY WARNING:${NC}"
+echo -e "${RED}You will be required to change this password on first login.${NC}"
+echo -e "${RED}This is a temporary password for initial access only.${NC}"
 echo
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Default Admin Account${NC}"
