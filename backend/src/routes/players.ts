@@ -234,4 +234,4 @@ router.post('/:uuid/message', async (req, res) => {
   }
 });
 
-export { router as playerRoutes };
+export default router;
