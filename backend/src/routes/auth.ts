@@ -1,219 +1,74 @@
 import express from 'express';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import rateLimit from 'express-rate-limit';
-import { db } from '../database/init';
+import db from '../db';
+import authenticate, { User } from '../middleware/auth';
 
 const router = express.Router();
+const SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Require JWT_SECRET to be set
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is required');
+// Generate JWT token for a user
+function generateToken(user: User) {
+  return jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      is_admin: user.is_admin,
+    },
+    SECRET,
+    { expiresIn: '8h' }
+  );
 }
 
-const SALT_ROUNDS = 12;
-
-// Rate limiting for login attempts
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 requests per windowMs
-  message: {
-    success: false,
-    message: 'Too many login attempts, please try again later'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Rate limiting for registration
-const registerLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // Limit each IP to 3 registration attempts per hour
-  message: {
-    success: false,
-    message: 'Too many registration attempts, please try again later'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Input validation middleware
-const validateAuthInput = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+// POST /auth/login
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Username and password are required' 
-    });
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  // Sanitize username
-  const sanitizedUsername = username.trim().toLowerCase();
-  if (sanitizedUsername.length < 3 || sanitizedUsername.length > 50) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Username must be between 3 and 50 characters' 
-    });
+  const isValid = await bcrypt.compare(password, user.password_hash);
+
+  if (!isValid) {
+    return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  // Validate username format (alphanumeric and underscores only)
-  if (!/^[a-zA-Z0-9_]+$/.test(sanitizedUsername)) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Username can only contain letters, numbers, and underscores' 
-    });
-  }
+  const token = generateToken(user);
 
-  if (password.length < 6) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Password must be at least 6 characters long' 
-    });
-  }
-
-  req.body.username = sanitizedUsername;
-  next();
-};
-
-// Register
-router.post('/register', registerLimiter, validateAuthInput, async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    // Check if user already exists
-    const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'User already exists' });
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      username: user.username,
+      isAdmin: user.is_admin === 1,
+      mustChangePassword: user.must_change_password === 1,
+      createdAt: user.created_at
     }
-
-    // Hash password
-    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-
-    // Insert user (new users are not admin by default)
-    const result = db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, 0);
-    
-    // Generate JWT
-    const token = jwt.sign({ 
-      id: result.lastInsertRowid, 
-      username,
-      isAdmin: false 
-    }, JWT_SECRET, { expiresIn: '24h' });
-
-    res.json({
-      success: true,
-      data: {
-        token,
-        user: {
-          id: result.lastInsertRowid,
-          username,
-          isAdmin: false,
-          mustChangePassword: false,
-          createdAt: new Date().toISOString()
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ success: false, message: 'Registration failed' });
-  }
+  });
 });
 
-// Login
-router.post('/login', loginLimiter, validateAuthInput, async (req, res) => {
-  try {
-    const { username, password } = req.body;
+// POST /auth/change-password
+router.post('/change-password', authenticate, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  const user = req.user!;
 
-    // Find user
-    const user = db.prepare('SELECT id, username, password_hash, must_change_password, is_admin, created_at FROM users WHERE username = ?').get(username);
-    if (!user) {
-      return res.status(400).json({ success: false, message: 'Invalid credentials' });
-    }
+  const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
 
-    // Verify password
-    const isValid = await bcrypt.compare(password, user.password_hash);
-    if (!isValid) {
-      return res.status(400).json({ success: false, message: 'Invalid credentials' });
-    }
+  const isValid = await bcrypt.compare(currentPassword, dbUser.password_hash);
 
-    // Generate JWT
-    const token = jwt.sign({ 
-      id: user.id, 
-      username: user.username, 
-      isAdmin: user.is_admin === 1 
-    }, JWT_SECRET, { expiresIn: '24h' });
-
-    res.json({
-      success: true,
-      data: {
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          isAdmin: user.is_admin === 1,
-          mustChangePassword: user.must_change_password === 1,
-          createdAt: user.created_at
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ success: false, message: 'Login failed' });
+  if (!isValid) {
+    return res.status(400).json({ error: 'Incorrect current password' });
   }
+
+  const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
+    .run(newPasswordHash, user.id);
+
+  res.json({ success: true });
 });
 
-// Change password
-router.post('/change-password', async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const token = req.headers.authorization?.replace('Bearer ', '');
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Current and new passwords are required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
-    }
-
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'No token provided' });
-    }
-
-    // Verify token
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
-    
-    // Get user
-    const user = db.prepare('SELECT id, username, password_hash FROM users WHERE id = ?').get(decoded.id);
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
-    }
-
-    // Verify current password
-    const isValid = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isValid) {
-      return res.status(400).json({ success: false, message: 'Current password is incorrect' });
-    }
-
-    // Hash new password
-    const newPasswordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-
-    // Update password and clear must_change_password flag
-    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
-      .run(newPasswordHash, user.id);
-
-    res.json({
-      success: true,
-      message: 'Password changed successfully'
-    });
-  } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ success: false, message: 'Invalid token' });
-    }
-    console.error('Password change error:', error);
-    res.status(500).json({ success: false, message: 'Failed to change password' });
-  }
-});
-
-export { router as authRoutes };
+export default router;
