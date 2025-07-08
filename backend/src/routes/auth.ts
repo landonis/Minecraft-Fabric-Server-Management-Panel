@@ -1,74 +1,78 @@
-import express from 'express';
+import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
 import db from '../db';
-import authenticate, { User } from '../middleware/auth';
+import { User } from '../types/User';
+import authenticateToken from '../middleware/auth';
 
-const router = express.Router();
-const SECRET = process.env.JWT_SECRET || 'your-secret-key';
+dotenv.config();
 
-// Generate JWT token for a user
-function generateToken(user: User) {
-  return jwt.sign(
-    {
-      id: user.id,
-      username: user.username,
-      is_admin: user.is_admin,
-    },
-    SECRET,
-    { expiresIn: '8h' }
-  );
+const router = Router();
+const JWT_SECRET = process.env.JWT_SECRET || 'your_default_secret';
+
+function generateToken(user: User): string {
+  return jwt.sign({
+    id: user.id,
+    username: user.username,
+    is_admin: user.is_admin
+  }, JWT_SECRET, { expiresIn: '12h' });
 }
 
-// POST /auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', async (req: Request, res: Response) => {
   const { username, password } = req.body;
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User;
+    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    if (!isValid) return res.status(401).json({ message: 'Invalid credentials' });
 
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid username or password' });
+    const token = generateToken(user);
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        isAdmin: user.is_admin === 1,
+        mustChangePassword: user.must_change_password === 1,
+        createdAt: user.created_at
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Login failed', error });
   }
+});
 
-  const isValid = await bcrypt.compare(password, user.password_hash);
-
-  if (!isValid) {
-    return res.status(401).json({ error: 'Invalid username or password' });
-  }
-
-  const token = generateToken(user);
-
+router.get('/me', authenticateToken, (req: Request, res: Response) => {
+  const { user } = req as any;
   res.json({
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      isAdmin: user.is_admin === 1,
-      mustChangePassword: user.must_change_password === 1,
-      createdAt: user.created_at
-    }
+    id: user.id,
+    username: user.username,
+    isAdmin: user.is_admin === 1,
+    mustChangePassword: user.must_change_password === 1,
+    createdAt: user.created_at
   });
 });
 
-// POST /auth/change-password
-router.post('/change-password', authenticate, async (req, res) => {
+router.post('/change-password', authenticateToken, async (req: Request, res: Response) => {
+  const { user } = req as any;
   const { currentPassword, newPassword } = req.body;
-  const user = req.user!;
 
-  const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  try {
+    const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
+    const isValid = await bcrypt.compare(currentPassword, dbUser.password_hash);
+    if (!isValid) return res.status(400).json({ message: 'Current password is incorrect' });
 
-  const isValid = await bcrypt.compare(currentPassword, dbUser.password_hash);
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
+      .run(newPasswordHash, user.id);
 
-  if (!isValid) {
-    return res.status(400).json({ error: 'Incorrect current password' });
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to change password', error });
   }
-
-  const newPasswordHash = await bcrypt.hash(newPassword, 10);
-
-  db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
-    .run(newPasswordHash, user.id);
-
-  res.json({ success: true });
 });
 
 export default router;
