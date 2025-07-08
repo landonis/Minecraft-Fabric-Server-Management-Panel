@@ -94,9 +94,13 @@ npm install
 npm install axios
 npm install --save-dev @types/axios
 
+
 # Build backend
 echo -e "${YELLOW}Building backend...${NC}"
 cd backend
+
+npm install dotenv
+
 npm install
 npm run build
 
