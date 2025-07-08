@@ -1,57 +1,58 @@
-
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import authenticateToken  from '../middleware/auth';
 import { exec } from 'child_process';
-import authenticateToken from '../middleware/auth';
 
 const router = express.Router();
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, '/tmp/minecraft-imports');
-  },
-  filename: (req, file, cb) => {
-    cb(null, 'imported_world.tar');
-  },
-});
-
+// Configure multer to store .tar files in /tmp/minecraft-imports
 const upload = multer({
-  storage,
-  fileFilter: (_req, file, cb) => {
-    if (path.extname(file.originalname) !== '.tar') {
+  dest: '/tmp/minecraft-imports',
+  fileFilter: (req, file, cb: (error: Error | null, acceptFile: boolean) => void) => {
+    if (!file.originalname.endsWith('.tar')) {
       return cb(new Error('Only .tar files are allowed'), false);
     }
     cb(null, true);
-  },
+  }
 });
 
+// POST /api/world/upload
 router.post('/upload', authenticateToken, upload.single('world'), async (req, res) => {
   try {
-    const tarPath = '/tmp/minecraft-imports/imported_world.tar';
-    const extractPath = process.env.WORLD_PATH;
+    const file = req.file;
 
-    if (!extractPath) {
-      return res.status(500).json({ error: 'WORLD_PATH not defined in environment' });
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    await new Promise((resolve, reject) => {
-      exec(`tar -xvf ${tarPath} -C ${extractPath} --strip-components=1`, (error, stdout, stderr) => {
-        if (error) {
-          console.error('Extract error:', stderr);
-          reject(error);
-        } else {
-          console.log('Extracted:', stdout);
-          resolve(true);
-        }
-      });
-    });
+    const minecraftWorldDir = process.env.WORLD_PATH || '/home/ubuntu/Minecraft/world';
+    const tempFilePath = file.path;
 
-    res.json({ message: 'World imported successfully' });
-  } catch (error) {
-    console.error('World upload failed:', error);
-    res.status(500).json({ error: 'Failed to import world' });
+    // Remove existing world directory (backup first in production)
+    if (fs.existsSync(minecraftWorldDir)) {
+      fs.rmSync(minecraftWorldDir, { recursive: true, force: true });
+    }
+
+    // Create target directory
+    fs.mkdirSync(minecraftWorldDir, { recursive: true });
+
+    // Extract .tar file
+    exec(`tar -xvf ${tempFilePath} -C ${minecraftWorldDir}`, (error, stdout, stderr) => {
+      if (error) {
+        console.error('Extraction error:', error);
+        return res.status(500).json({ error: 'Failed to extract world file' });
+      }
+
+      // Remove uploaded file
+      fs.unlinkSync(tempFilePath);
+
+      res.json({ message: 'World uploaded and extracted successfully' });
+    });
+  } catch (err) {
+    console.error('Upload failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
