@@ -1,64 +1,47 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import dotenv from 'dotenv';
 import db from '../db';
+import { User } from '../types/User';
 
-export interface User {
-  id: number;
-  username: string;
-  is_admin: number;
-  must_change_password?: number;
-  created_at?: string;
+dotenv.config();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your_default_secret';
+
+// Extend Express Request to include user
+interface AuthenticatedRequest extends Request {
+  user?: User;
 }
 
-// Extend Express Request type to include `user`
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-    }
-  }
-}
-
-const SECRET = process.env.JWT_SECRET || 'your-secret-key';
-
-// Middleware: Verify JWT and attach user to request
-const authenticate = (req: Request, res: Response, next: NextFunction) => {
+function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader?.split(' ')[1]; // Expect "Bearer <token>"
+  const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: 'Token missing' });
-  }
+  if (!token) return res.sendStatus(401);
 
-  try {
-    const decoded = jwt.verify(token, SECRET) as User;
+  jwt.verify(token, JWT_SECRET, (error, userDecoded) => {
+    if (error) {
+      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+        return res.status(403).json({ message: 'Invalid or expired token' });
+      }
+      return res.status(500).json({ message: 'Token verification failed' });
+    }
 
-    // Pull latest user info from DB (optional for added safety)
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.id);
-
-    if (!user) {
-      return res.status(401).json({ error: 'User not found' });
+    const user = userDecoded as Partial<User>;
+    if (!user || !user.id || !user.username) {
+      return res.status(403).json({ message: 'Token payload invalid' });
     }
 
     req.user = {
       id: user.id,
       username: user.username,
-      is_admin: user.is_admin,
-      must_change_password: user.must_change_password,
-      created_at: user.created_at,
+      is_admin: user.is_admin || 0,
+      must_change_password: user.must_change_password || 0,
+      created_at: user.created_at || new Date().toISOString()
     };
 
     next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({ error: 'Token expired' });
-    }
-    if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
+  });
+}
 
-    return res.status(500).json({ error: 'Authentication error' });
-  }
-};
-
-export default authenticate;
+export default authenticateToken;
