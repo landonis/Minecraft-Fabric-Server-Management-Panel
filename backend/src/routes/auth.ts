@@ -1,33 +1,32 @@
-import { Router, Request, Response } from 'express';
+import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
 import db from '../db';
-import { User } from '../types/User';
 import authenticateToken from '../middleware/auth';
+import { generateToken } from '../utils';
+import { User } from '../types/User';
 
-dotenv.config();
+const router = express.Router();
 
-
-const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your_default_secret';
-
-function generateToken(user: User): string {
-  return jwt.sign({
-    id: user.id,
-    username: user.username,
-    is_admin: user.is_admin
-  }, JWT_SECRET, { expiresIn: '12h' });
-}
-
-router.post('/login', async (req: Request, res: Response) => {
-  const { username, password } = req.body;
+// POST /api/auth/login
+router.post('/login', async (req, res) => {
   try {
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as User;
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    const { username, password } = req.body;
+    const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
+    const user = stmt.get(username) as User | undefined;
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    if (!user.password_hash) {
+      return res.status(401).json({ error: 'Missing password hash' });
+    }
 
     const isValid = await bcrypt.compare(password, user.password_hash);
-    if (!isValid) return res.status(401).json({ message: 'Invalid credentials' });
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
 
     const token = generateToken(user);
 
@@ -42,37 +41,37 @@ router.post('/login', async (req: Request, res: Response) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ message: 'Login failed', error });
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.get('/me', authenticateToken, (req: Request, res: Response) => {
-  const { user } = req as any;
-  res.json({
-    id: user.id,
-    username: user.username,
-    isAdmin: user.is_admin === 1,
-    mustChangePassword: user.must_change_password === 1,
-    createdAt: user.created_at
-  });
-});
-
-router.post('/change-password', authenticateToken, async (req: Request, res: Response) => {
-  const { user } = req as any;
-  const { currentPassword, newPassword } = req.body;
-
+// POST /api/auth/change-password
+router.post('/change-password', authenticateToken, async (req, res) => {
   try {
-    const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as User;
+    const { currentPassword, newPassword } = req.body;
+    const user = req.user as User;
+
+    const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+    const dbUser = stmt.get(user.id) as User | undefined;
+
+    if (!dbUser || !dbUser.password_hash) {
+      return res.status(401).json({ error: 'User not found or missing password' });
+    }
+
     const isValid = await bcrypt.compare(currentPassword, dbUser.password_hash);
-    if (!isValid) return res.status(400).json({ message: 'Current password is incorrect' });
+    if (!isValid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
 
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
       .run(newPasswordHash, user.id);
 
-    res.json({ message: 'Password changed successfully' });
+    res.json({ message: 'Password updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to change password', error });
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
