@@ -10,7 +10,7 @@ import worldRoutes from './routes/world';
 import playerRoutes from './routes/players';
 import authenticate from './middleware/auth';
 
-dotenv.config();
+dotenv.config({ path: '/home/ubuntu/minecraft-manager/.env' });
 
 const app = express();
 const port = process.env.PORT || 3001;
