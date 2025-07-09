@@ -21,7 +21,7 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Public routes
-app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 
 // Protected routes
 app.use('/server', authenticate, serverRoutes);
