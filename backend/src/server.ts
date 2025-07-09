@@ -1,39 +1,62 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import morgan from 'morgan';
 import dotenv from 'dotenv';
+import { initDatabase } from './database/init';
 import authRoutes from './routes/auth';
 import serverRoutes from './routes/server';
 import modRoutes from './routes/mods';
 import worldRoutes from './routes/world';
 import playerRoutes from './routes/players';
-import authenticate from './middleware/auth';
 
-dotenv.config({ path: '/home/ubuntu/minecraft-manager/.env' });
+// Load environment variables
+dotenv.config({ 
+  path: process.env.NODE_ENV === 'production' 
+    ? '/home/ubuntu/minecraft-manager/.env' 
+    : '.env' 
+});
 
 const app = express();
 const port = process.env.PORT || 3001;
 
+// Initialize database
+initDatabase();
+
+// Middleware
 app.use(cors());
 app.use(helmet());
-app.use(morgan('dev'));
 app.use(express.json());
 
 // Public routes
 app.use('/api/auth', authRoutes);
 
 // Protected routes
-app.use('/server', authenticate, serverRoutes);
-app.use('/mods', authenticate, modRoutes);
-app.use('/world', authenticate, worldRoutes);
-app.use('/players', authenticate, playerRoutes);
+app.use('/api/server', serverRoutes);
+app.use('/api/mods', modRoutes);
+app.use('/api/world', worldRoutes);
+app.use('/api/players', playerRoutes);
 
 // Root test
 app.get('/', (_req, res) => {
-  res.send('Minecraft Fabric Server Manager API is running');
+  res.json({ 
+    message: 'Minecraft Fabric Server Manager API is running',
+    version: '1.0.0',
+    status: 'healthy'
+  });
+});
+
+// Health check endpoint
+app.get('/health', (_req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Error handling middleware
+app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Unhandled error:', error);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 app.listen(port, () => {
   console.log(`Backend listening at http://localhost:${port}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

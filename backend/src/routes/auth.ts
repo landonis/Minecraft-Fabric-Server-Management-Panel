@@ -1,17 +1,46 @@
 import express from 'express';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import db from '../db';
+import { db } from '../database/init';
 import authenticateToken from '../middleware/auth';
-import { generateToken } from '../utils';
+import rateLimit from 'express-rate-limit';
 import { User } from '../types/User';
 
+// Rate limiting
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per window
+  message: { error: 'Too many login attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const generateToken = (user: User) => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET not defined in environment');
+
+  return jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      is_admin: user.is_admin,
+      must_change_password: user.must_change_password
+    },
+    secret,
+    { expiresIn: '12h' }
+  );
+};
 const router = express.Router();
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    
     const stmt = db.prepare('SELECT * FROM users WHERE username = ?');
     const user = stmt.get(username) as User | undefined;
 
@@ -50,7 +79,19 @@ router.post('/login', async (req, res) => {
 router.post('/change-password', authenticateToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    const user = req.user as User;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+    
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
 
     const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
     const dbUser = stmt.get(user.id) as User | undefined;
@@ -64,7 +105,7 @@ router.post('/change-password', authenticateToken, async (req, res) => {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    const newPasswordHash = await bcrypt.hash(newPassword, 12);
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
       .run(newPasswordHash, user.id);
 
