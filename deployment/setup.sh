@@ -136,7 +136,6 @@ chown minecraft-manager:minecraft-manager /home/ubuntu/minecraft-manager/.env
 
 # Fabric Mod Integration
 FABRIC_MOD_PORT=8080
-EOF
 
 # Set secure permissions for environment file
 chmod 600 $APP_DIR/.env
