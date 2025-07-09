@@ -3,6 +3,9 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcrypt';
 
+import dotenv from 'dotenv';
+dotenv.config({ path: '/home/ubuntu/minecraft-manager/.env' }); // <== ADD THIS LINE FIRST
+
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../../data/database.db');
 const SALT_ROUNDS = 12;
 
