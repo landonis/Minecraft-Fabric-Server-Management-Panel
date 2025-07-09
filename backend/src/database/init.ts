@@ -87,3 +87,15 @@ const createDefaultAdmin = async () => {
     console.error('Error creating default admin:', error);
   }
 };
+
+
+
+export const checkDatabaseHealth = (): boolean => {
+  try {
+    db.prepare('SELECT 1').get();
+    return true;
+  } catch (err) {
+    console.error('Database health check failed:', err);
+    return false;
+  }
+};

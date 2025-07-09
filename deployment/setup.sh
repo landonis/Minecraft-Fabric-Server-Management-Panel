@@ -1,4 +1,46 @@
 #!/bin/bash
+set -e
+
+# Bootstrap system packages (safe for reruns)
+echo "📦 Installing system packages..."
+
+# === Ensure Java 21 is installed and set as default ===
+if ! java -version 2>&1 | grep -q 'version "21'; then
+    echo "⚙️ Installing Java 21..."
+    apt install -y openjdk-21-jre-headless
+    update-alternatives --install /usr/bin/java java /usr/lib/jvm/java-21-openjdk-amd64/bin/java 1
+    update-alternatives --set java /usr/lib/jvm/java-21-openjdk-amd64/bin/java
+else
+    echo "✅ Java 21 is already installed and active."
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+apt update -y
+apt install -y curl git wget ufw nginx fail2ban openssl     openjdk-21-jre-headless nodejs npm software-properties-common
+
+# Optional: Snap install certbot if not present
+if ! command -v certbot &>/dev/null; then
+    echo "🔐 Installing certbot with snap..."
+    snap install core && snap refresh core
+    snap install --classic certbot
+    ln -sf /snap/bin/certbot /usr/bin/certbot
+fi
+
+# Create dedicated users if not exists
+id -u minecraft &>/dev/null || useradd -m -r -s /usr/sbin/nologin minecraft
+id -u minecraft-manager &>/dev/null || useradd -m -r -s /bin/bash minecraft-manager
+
+# Make sure groups are aligned
+usermod -aG minecraft minecraft-manager 2>/dev/null || true
+
+# Environment-specific paths
+export APP_DIR="/home/minecraft-manager/minecraft-manager"
+export DATA_DIR="/home/minecraft-manager/minecraft-data"
+export MINECRAFT_DIR="/home/minecraft/Minecraft"
+export LOG_DIR="/home/minecraft-manager/minecraft-logs"
+export BACKUP_DIR="/home/minecraft-manager/minecraft-backups"
+
+#!/bin/bash
 
 # Minecraft Server Manager - Complete Production Setup Script
 # Ubuntu 24.04 LTS - Supports domain or IP-based deployment
@@ -27,11 +69,11 @@ FABRIC_VERSION="0.15.3"
 NODE_VERSION="18"
 
 # System paths
-APP_DIR="/home/ubuntu/minecraft-manager"
-MINECRAFT_DIR="/home/ubuntu/Minecraft"
-DATA_DIR="/home/ubuntu/minecraft-data"
+APP_DIR="$APP_DIR"
+MINECRAFT_DIR="$MINECRAFT_DIR"
+DATA_DIR="$DATA_DIR"
 LOG_DIR="/var/log/minecraft-manager"
-BACKUP_DIR="/home/ubuntu/minecraft-backups"
+BACKUP_DIR="$BACKUP_DIR"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  Minecraft Server Manager Setup${NC}"
@@ -305,12 +347,14 @@ sudo -u minecraft-manager npm install --production
 print_status "Building backend..."
 cd "$APP_DIR/backend"
 sudo -u minecraft-manager npm install --production
-sudo -u minecraft-manager npm run build
+sudo -u minecraft-manager tsc
+npm run build
 
 # Build frontend
 print_status "Building frontend..."
 cd "$APP_DIR"
-sudo -u minecraft-manager npm run build
+sudo -u minecraft-manager tsc
+npm run build
 
 # Initialize database
 print_status "Initializing database..."
@@ -327,25 +371,42 @@ try {
 "
 
 # Setup Minecraft Fabric server
+
 print_status "Setting up Minecraft Fabric server..."
-if [[ ! -f "$MINECRAFT_DIR/fabric-server-launch.jar" ]]; then
-    print_status "Downloading Minecraft Fabric server..."
+
+FABRIC_JAR="$MINECRAFT_DIR/fabric-server-launch.jar"
+FABRIC_VALID=false
+
+# Check if fabric-server-launch.jar exists and is a valid JAR file
+if [[ -f "$FABRIC_JAR" ]]; then
+    if unzip -l "$FABRIC_JAR" > /dev/null 2>&1; then
+        FABRIC_VALID=true
+        print_success "Minecraft Fabric server already exists and is valid"
+    else
+        print_warning "Existing Fabric server jar appears to be corrupt — reinitializing..."
+        rm -f "$FABRIC_JAR"
+    fi
+fi
+
+if [[ "$FABRIC_VALID" == false ]]; then
+    print_status "Downloading and installing Minecraft Fabric server..."
     cd "$MINECRAFT_DIR"
-    
+
     # Download Fabric installer
     wget -q -O fabric-installer.jar "https://maven.fabricmc.net/net/fabricmc/fabric-installer/$FABRIC_VERSION/fabric-installer-$FABRIC_VERSION.jar"
-    
+
     # Install Fabric server
     sudo -u minecraft java -jar fabric-installer.jar server -mcversion "$MINECRAFT_VERSION" -downloadMinecraft
-    
+
     # Clean up installer
-    rm fabric-installer.jar
-    
+    rm -f fabric-installer.jar
+
     # Accept EULA
     echo "eula=true" > eula.txt
-    
-    # Create server.properties
-    cat > server.properties << EOF
+
+    # Create server.properties if missing
+    if [[ ! -f server.properties ]]; then
+        cat > server.properties << EOF
 server-port=25565
 gamemode=survival
 difficulty=normal
@@ -359,14 +420,26 @@ enable-query=false
 view-distance=10
 simulation-distance=10
 EOF
-    
+    fi
+
+    # Set ownership
     chown -R minecraft:minecraft "$MINECRAFT_DIR"
     print_success "Minecraft Fabric server installed"
-else
-    print_success "Minecraft Fabric server already exists"
 fi
 
 # Create systemd services
+
+# === Build and deploy Fabric mod ===
+cd "$APP_DIR/mods/player-viewer"
+./gradlew build --no-daemon
+
+MOD_JAR=$(find build/libs -name "*.jar" | head -n 1)
+if [[ -f "$MOD_JAR" ]]; then
+    echo "✅ Mod built successfully: $MOD_JAR"
+    cp "$MOD_JAR" "$MINECRAFT_DIR/mods/"
+else
+    echo "❌ Failed to build Fabric mod."
+fi
 print_status "Creating systemd services..."
 
 # Minecraft server service
@@ -553,17 +626,37 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
 # Configure firewall
-print_status "Configuring firewall..."
-ufw --force reset
-ufw --force enable
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow ssh
-ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 25565/tcp  # Minecraft server port
 
-# Configure fail2ban
+print_status "Configuring iptables firewall..."
+
+# Flush existing rules
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t mangle -F
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT ACCEPT
+
+# Allow loopback
+iptables -A INPUT -i lo -j ACCEPT
+
+# Allow established connections
+iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+# Allow SSH
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+# Allow HTTP and HTTPS
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# Allow Minecraft server port
+iptables -A INPUT -p tcp --dport 25565 -j ACCEPT
+
+# Save iptables rules across reboots (using iptables-persistent)
+apt install -y iptables-persistent
+netfilter-persistent save
 print_status "Configuring fail2ban..."
 cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
@@ -599,9 +692,9 @@ print_status "Creating utility scripts..."
 # Backup script
 cat > /usr/local/bin/minecraft-backup.sh << 'EOF'
 #!/bin/bash
-BACKUP_DIR="/home/ubuntu/minecraft-backups"
-WORLD_DIR="/home/ubuntu/Minecraft/world"
-DATA_DIR="/home/ubuntu/minecraft-data"
+BACKUP_DIR="$BACKUP_DIR"
+WORLD_DIR="$MINECRAFT_DIR/world"
+DATA_DIR="$DATA_DIR"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p "$BACKUP_DIR"
@@ -683,9 +776,9 @@ journalctl -u minecraft-server --since "5 minutes ago" --no-pager -n 3 -q | tail
 
 echo ""
 echo "💾 Disk Usage:"
-echo "Application: $(du -sh /home/ubuntu/minecraft-manager 2>/dev/null | cut -f1 || echo 'N/A')"
-echo "Minecraft: $(du -sh /home/ubuntu/Minecraft 2>/dev/null | cut -f1 || echo 'N/A')"
-echo "Backups: $(du -sh /home/ubuntu/minecraft-backups 2>/dev/null | cut -f1 || echo 'N/A')"
+echo "Application: $(du -sh $APP_DIR 2>/dev/null | cut -f1 || echo 'N/A')"
+echo "Minecraft: $(du -sh $MINECRAFT_DIR 2>/dev/null | cut -f1 || echo 'N/A')"
+echo "Backups: $(du -sh $BACKUP_DIR 2>/dev/null | cut -f1 || echo 'N/A')"
 EOF
 
 chmod +x /usr/local/bin/minecraft-status.sh
@@ -693,7 +786,7 @@ chmod +x /usr/local/bin/minecraft-status.sh
 # Update script
 cat > /usr/local/bin/minecraft-update.sh << 'EOF'
 #!/bin/bash
-APP_DIR="/home/ubuntu/minecraft-manager"
+APP_DIR="$APP_DIR"
 
 echo "Updating Minecraft Server Manager..."
 
@@ -711,11 +804,13 @@ sudo -u minecraft-manager git pull origin main
 sudo -u minecraft-manager npm install --production
 cd backend
 sudo -u minecraft-manager npm install --production
-sudo -u minecraft-manager npm run build
+sudo -u minecraft-manager tsc
+npm run build
 
 # Build frontend
 cd "$APP_DIR"
-sudo -u minecraft-manager npm run build
+sudo -u minecraft-manager tsc
+npm run build
 
 # Restart services
 systemctl start minecraft-manager

@@ -20,7 +20,12 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 // Initialize database
-initDatabase();
+try {
+  initDatabase();
+} catch (err) {
+  console.error('❌ Failed to initialize database:', err);
+  process.exit(1);
+}
 
 // Middleware
 app.use(cors());
@@ -37,6 +42,15 @@ app.use('/api/world', worldRoutes);
 app.use('/api/players', playerRoutes);
 
 // Root test
+app.get('/api/health', (_req, res) => {
+  const dbOk = checkDatabaseHealth();
+  if (dbOk) {
+    res.status(200).json({ status: 'ok' });
+  } else {
+    res.status(500).json({ status: 'error', message: 'Database unreachable' });
+  }
+});
+
 app.get('/', (_req, res) => {
   res.json({ 
     message: 'Minecraft Fabric Server Manager API is running',

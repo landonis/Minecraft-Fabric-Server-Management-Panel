@@ -1,4 +1,6 @@
 import express from 'express';
+import { getServerSeed } from '../utils/seed';
+import express from 'express';
 import { exec } from 'child_process';
 import authenticateToken from '../middleware/auth';
 
@@ -58,3 +60,32 @@ router.post('/restart', authenticateToken, async (_req, res) => {
 });
 
 export default router;
+
+router.get('/seed', (_req, res) => {
+  const seed = getServerSeed();
+  if (seed) {
+    res.json({ seed });
+  } else {
+    res.status(404).json({ error: 'Seed not available yet' });
+  }
+});
+
+router.post('/players/:uuid/teleport', async (req, res) => {
+  const { uuid } = req.params;
+  const { x, y, z } = req.body;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+
+  try {
+    // Send command to the Minecraft server (via RCON, websocket, or your internal API)
+    const command = `tp ${uuid} ${x} ${y} ${z}`;
+    // TODO: Replace this with real implementation. Example: sendCommandToMinecraft(command);
+    console.log('[Teleport]', command);
+
+    res.json({ success: true, command });
+  } catch (err) {
+    console.error('Teleport failed:', err);
+    res.status(500).json({ error: 'Teleport failed' });
+  }
+});

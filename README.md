@@ -373,7 +373,28 @@ certbot renew --dry-run
 - **NGINX**: `/var/log/nginx/access.log`, `/var/log/nginx/error.log`
 - **System**: `/var/log/syslog`
 
-## 🚀 Deployment Options
+
+## 🚀 Deployment
+
+You can deploy this server manager on any fresh Ubuntu 24.04 system (including headless SSH environments) with:
+
+```bash
+curl -sL https://yourdomain.com/bootstrap.sh | bash
+```
+
+### Manual Steps
+
+Alternatively, clone the project and run the setup script:
+
+```bash
+git clone https://github.com/youruser/minecraft-manager.git
+cd minecraft-manager/deployment
+sudo ./setup.sh
+```
+
+> ⚠️ **Note:** The deployment script installs required packages, configures services, and sets up everything under dedicated system users. It does **not** require setting any variables like `DOMAIN` or `ADMIN_EMAIL`. If they are unset, default behavior is used (access via IP, no email-based SSL registration).
+
+---
 
 ### Oracle Cloud Free Tier
 Perfect for the Oracle Cloud Always Free tier:
@@ -451,3 +472,22 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Made with ❤️ for the Minecraft community**
+
+## 🖥️ ARM Architecture Support
+
+This project is fully compatible with ARM64 platforms, including:
+
+- Oracle Cloud ARM instances (Ampere A1)
+- AWS Graviton EC2 (a1, t4g)
+- Raspberry Pi 4/5 (Ubuntu 24.04 Server)
+- Any ARM64 Ubuntu VPS or device
+
+The deployment script installs all required native build tools to support SQLite bindings:
+
+```bash
+apt install -y build-essential g++ python3 make
+```
+
+This ensures modules like `better-sqlite3` can compile and run properly on ARM systems.
+
+No changes to the source code are needed — just run the same setup process as on x86 systems.
