@@ -119,7 +119,12 @@ apt install -y -qq \
     vim \
     ufw \
     fail2ban \
-    logrotate
+    logrotate \
+    build-essential \
+    python3 \
+    python3-dev \
+    make \
+    g++
 
 # Install Node.js
 print_status "Installing Node.js $NODE_VERSION..."

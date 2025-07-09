@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint .",
-    "setup": "chmod +x deployment/setup.sh && echo 'Setup script is ready. Run: sudo ./deployment/setup.sh'",
+    "setup": "chmod +x ./deployment/setup.sh && echo 'Setup script is ready. Run: sudo ./deployment/setup.sh'",
     "backend:dev": "cd backend && npm run dev",
     "backend:build": "cd backend && npm run build",
     "backend:start": "cd backend && npm start"
