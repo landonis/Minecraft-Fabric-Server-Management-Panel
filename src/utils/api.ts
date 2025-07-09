@@ -109,7 +109,7 @@ class ApiClient {
 
   // Mod endpoints
   async uploadMod(file: File) {
-    return this.upload('/mods/upload', file);
+    return this.upload('/mods', file, 'mod');
   }
 
   async getMods() {
@@ -141,7 +141,7 @@ class ApiClient {
   }
 
   async importWorld(file: File) {
-    return this.upload('/world/import', file);
+    return this.upload('/world/import', file, 'world');
   }
 
   // Player endpoints
