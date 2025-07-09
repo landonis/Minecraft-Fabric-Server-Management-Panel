@@ -114,7 +114,7 @@ PORT=3001
 FRONTEND_URL=https://193.122.146.200/
 
 # Database Configuration
-DB_PATH=/home/ubuntu/minecraft-data/database.db
+DB_PATH=/home/ubuntu/minecraft-data/data/database.db
 
 # JWT Configuration
 JWT_SECRET=$(openssl rand -hex 32)
