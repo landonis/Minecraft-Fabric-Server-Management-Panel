@@ -105,27 +105,34 @@ npm install dotenv
 
 npm install
 npm run build
-
 # Create environment file
 echo -e "${YELLOW}Creating environment configuration...${NC}"
-cat > $APP_DIR/.env << EOF
+cat > /home/ubuntu/minecraft-manager/.env << EOF
 # Environment Configuration
 NODE_ENV=production
 PORT=3001
-FRONTEND_URL=https://$DOMAIN
+FRONTEND_URL=https://193.122.146.200/
 
 # Database Configuration
-DB_PATH=$DATA_DIR/database.db
+DB_PATH=/home/ubuntu/minecraft-data/database.db
 
 # JWT Configuration
 JWT_SECRET=$(openssl rand -hex 32)
 
 # Minecraft Server Configuration
-MINECRAFT_PATH=$MINECRAFT_DIR
-WORLD_PATH=$MINECRAFT_DIR/world
-MODS_PATH=$MINECRAFT_DIR/mods
-BACKUP_PATH=$MINECRAFT_DIR/backups
+MINECRAFT_PATH=/home/ubuntu/Minecraft
+WORLD_PATH=/home/ubuntu/Minecraft/world
+MODS_PATH=/home/ubuntu/Minecraft/mods
+BACKUP_PATH=/home/ubuntu/Minecraft/backups
 TEMP_PATH=/tmp/minecraft-imports
+
+# Fabric Mod Integration
+FABRIC_MOD_PORT=8080
+EOF
+
+# Set secure permissions
+chmod 600 /home/ubuntu/minecraft-manager/.env
+chown minecraft-manager:minecraft-manager /home/ubuntu/minecraft-manager/.env
 
 # Fabric Mod Integration
 FABRIC_MOD_PORT=8080
